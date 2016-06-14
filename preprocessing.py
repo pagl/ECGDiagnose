@@ -6,6 +6,8 @@ import numpy as np
 import scipy.io as spio
 import scipy.signal as spsi
 import qrsdetect as qrs
+import statsmodels.tsa.ar_model as ar_model
+
 WT_times = 5
 mV = 1.0
 def preprocess(data): ## data - pojedynczy wykres z spio.loadmat; jak jest wiecej wykresow to podac data[i] do funkcji
@@ -34,10 +36,37 @@ def makeWT(y,times): ## robi pare razy WT na approx.
 		wtaxA[index-1]=wtaxA[index-1] - ymin
 	
 	return wtaxA,wtaxD
+
+
+
+def armodel(y,cutlist):
+	array = []
+	result = []
+	offset = 20
+	for index,x in enumerate(cutlist[1:-1]):
+		x = int(x)
+		x2 = x + y[x-offset:x+offset].index(max(y[x-offset:x+offset]))
+		x2 = x2 - offset
+		i = x2 - 200
+		i1 = x2 + 100
+		array.append(y[i:i1].copy())
+	
+	for x in array:
+		ar = ar_model.AR(x)
+		arfit = ar.fit(maxlag=3,method='cmle',disp = 0)
+		result.append(arfit)
+	#print(result)
+	return result
+		
+
 def extract_arrays(y,cutlist,times): ## roz
-	y,wtaxD=makeWT(y,times)
+	
+	arfit = armodel(y,cutlist)
+	y,wtaxD=makeWT(y,times)	
 	cutlist = [int(x / (2**(times))) for x in cutlist]
+	
 	arrays = []
+	arrays_with_arfit = []
 	offset = 5 # ile sprawdzac w poblizu //powinno zalezec od WT_times ale kij z tym
 	for index,x in enumerate(cutlist[1:-1]):
 		x2 = x+ y[x-offset:x+offset].tolist().index(max(y[x-offset:x+offset]))
@@ -45,7 +74,13 @@ def extract_arrays(y,cutlist,times): ## roz
 		i = x2 -20*(2**(3-times))
 		i1 = x2 + 12*(2**(3-times))
 		arrays.append(y[i:i1].copy())
+		
+		arrays_with_arfit.append(np.concatenate([arrays[index],arfit[index].params]))
+	return arrays_with_arfit
 	return arrays
+
+
+
 def find_QRS(y,n):
          ymax = max(y)
          divide = WT_times
@@ -91,7 +126,16 @@ def determine(x1,x2,time):
 	else:
 		return False
 
-def getFeature(data,info): ## da
+def moving_average(signal, window=101):
+  weights = np.repeat(1.0, window) / window
+  smas = np.convolve(signal, weights, 'valid')
+  signal = signal[(window - 1) / 2 : len(signal) - ((window - 1) / 2)]
+  new_signal = []
+  for index, x in enumerate(signal):
+    new_signal.append(signal[index] - smas[index])
+  return new_signal
+
+def getFeature(data,qrs_peaks): ## da
 	'''
 	info: A dictionary object holding info
                     - 'name' = Patients name
@@ -99,26 +143,55 @@ def getFeature(data,info): ## da
                     - 'sex' = 'm', 'f' or 'u' for unknown
                     - 'samplingrate' = Hz
 	'''
-	info = {'name': "Roman", 'age': 50, 'sex': 'm', 'samplingrate' : 1000} ## pote
-	data2 = []	
+	#info = {'name': "Roman", 'age': 50, 'sex': 'm', 'samplingrate' : 1000} ## pote
+	
 	mV = 2000.0 ## tuta
-	for i in data: ##zmi
-		data2.append(i / mV)
-	ecg = qrs.Ecg(data2,info) ##inicjalizacja ecg
-	ecg.qrsDetect(0) ## 0 - numer wykresu, niby jak jest wiecej wykresow to mozna innego uzyc, ale blad wyskakuje
-	arrays = extract_arrays(data2,ecg.QRSpeaks,3) ## wyciecie pojedynczych uderzen dzieki QRSpeaks
+	multiple_arrays = []
+	for i in qrs_peaks:
+		multiple_arrays.append([])
+	for index, signal in enumerate(data):
+
+		#print(index)
+		#print(len(multiple_arrays))
+		data2 = []
+		for i in signal:
+			data2.append(i / mV)
+		arrays = extract_arrays(data2,qrs_peaks,3) ## wyciecie pojedynczych uderzen dzieki QRSpeaks
+		for index,array in enumerate(arrays):
+			multiple_arrays[index].extend(array)
+		#print(arrays)
+		#multiple_arrays.extend(arrays)
+		#print(multiple_arrays)
+	return multiple_arrays	
 	return arrays
 
 def main():
-	data = spio.loadmat('s0015lrem.mat')
+	data = spio.loadmat('s0010_rem.mat')
+	#data = spio.loadmat('s0130lrem.mat')
 #	data = spio.loadmat('100m.mat')
 	
 	data = data['val']
-	data = data[0]
-	info = 0
+	data3 = []
 	fig = plt.figure('ECG chart')
 	ax1 = plt.subplot(1, 1 ,1)
-	arrays = getFeature(data,info)
+	ax1.plot(range(0,len(data[3])),data[3])
+	plt.show()
+	for index,data2 in enumerate(data):
+		#data[index] = moving_average(data2,5001)
+		data3.append(moving_average(data2,5001))
+	info = 0
+	ax1 = plt.subplot(1, 1 ,1)
+	ax1.plot(range(0,len(data[3])),data[3])
+	plt.show()
+	#plt.show()
+	info = {'name': "x", 'age': 50, 'sex': 'm', 'samplingrate' : 1000}
+	ecg = qrs.Ecg(data3[0],info) ##inicjalizacja ecg
+	ecg.qrsDetect(0)
+	QRS_peaks = ecg.QRSpeaks
+
+	arrays = getFeature(data3[0:12],QRS_peaks)
+	print(len(arrays))
+	ax1 = plt.subplot(1, 1 ,1)
 	for i in arrays:
 		ax1.plot(range(0,len(i)),i)
 	'''
