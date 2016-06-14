@@ -3,6 +3,8 @@
 import csv
 import scipy.io
 import numpy as np
+import datetime
+import time
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from sklearn.neighbors import KNeighborsClassifier
@@ -83,13 +85,19 @@ def classification_report (y_test, y_pred,class_names):
 def test(X, y, class_names,folds=10,):
   file = open('diagnose.csv', 'w+')
   file_report = open('report.csv', 'w+')
+  file.write('%d/%d,%s,%s,%s,%s,%s,%s\n' % (len(X), len(X[0]), "Accuracy", "F1", "Precision", "Mean Square Error", "Recall", "Elapsed Time"))
+  file.close()
+  file_report.close()
 
-  file.write('%d/%d,%s,%s,%s,%s,%s\n' % (len(X), len(X[0]), "Accuracy", "F1", "Precision", "Mean Square Error", "Recall"))
   X = np.array(X)
   y = np.array(y)
 
   # Pętla po badanych przez nas klasyfikatorach
   for name, clf in zip(names, classifiers):
+    file = open('diagnose.csv', 'a')
+    file_report = open('report.csv', 'a')
+
+    total_time = 0
     accuracyV = 0
     aucV = 0
     apV = 0
@@ -108,11 +116,24 @@ def test(X, y, class_names,folds=10,):
       X_train, X_test = X[train_index], X[test_index]
       y_train, y_test = y[train_index], y[test_index]
 
+      # Rozpoczęcie liczenia czasu
+      start_time = datetime.datetime.now()
+
       # Umieszczanie cech wewnątrz klasyfikatora
       clf.fit(X_train, y_train)
 
       # Predykcja choroby
       pred = clf.predict(X_test)
+
+      # Zakończenie liczenia czasu
+      finish_time = datetime.datetime.now()
+
+      # Czas spędzony na przetwarzaniu
+      delta_time = finish_time - start_time
+      delta_time = int(delta_time.total_seconds() * 1000)
+
+      # Dopisanie do czasu totalnego
+      total_time += delta_time
 
       # Ewaluacja metryk
       accuracyV += accuracy(y_test, pred)
@@ -126,6 +147,7 @@ def test(X, y, class_names,folds=10,):
     precisionV /= folds
     mean_squared_errorV /= folds
     recall_scoreV /= folds
+    total_time /= folds
 
     # Umieszczanie cech wewnątrz klasyfikatora
     clf.fit(X_F_train, y_F_train)
@@ -139,27 +161,30 @@ def test(X, y, class_names,folds=10,):
     print ("Precision: %f" % precisionV)
     print ("Mean Squared Error: %f" % mean_squared_errorV)
     print ("Recall: %f" % recall_scoreV)   
+    print ("Time: %f" % total_time)
     print(classification_report(y_F_test, pred,class_names))
 
-    file.write('%s,%s,%s,%s,%s,%s\n' % (name, str(accuracyV), str(f1V), str(precisionV), str(mean_squared_errorV), str(recall_scoreV)))
+    file.write('%s,%s,%s,%s,%s,%s,%s\n' % (name, str(accuracyV), str(f1V), str(precisionV), str(mean_squared_errorV), str(recall_scoreV), str(total_time)))
     file_report.write('%s\n%s\n\n' % (name, classification_report(y_F_test, pred,class_names)))
-  file.close()
-  file_report.close()
+
+    file.close()
+    file_report.close()
 
 
-def feature_selection_test(features, diseases,class_names):
-  
+"""
+# Próba wybrania tylko najbardziej reprezentatywnych cech danego sygnału
+def feature_selection_test(features, diseases,class_names): 
   # Dekompozycja cech sygnalu do 2 wymiarow
-  #pca = PCA(n_components=2)
+  pca = PCA(n_components=2)
 
   # Wbudowana selekcja cech
-  #selection = SelectKBest(k=1)
+  selection = SelectKBest(k=5)
 
   #combined_features = FeatureUnion([("pca", pca), ("univ_select", selection)])
-  #X_features = combined_features.fit(features, diseases).transform(features)
+  X_features = combined_features.fit(features, diseases).transform(features)
 
   test(features, diseases,class_names)
-
+"""
 
 def remove_index(features, diseases, it):
   features_temp = []
