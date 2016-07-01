@@ -6,32 +6,38 @@ import scipy.signal
 import numpy
 import matplotlib.pyplot
 import pywt
-import glob, os
+import glob, os, subprocess
 import preprocessing
 import numpy as np
 import random
 import sklearn.preprocessing
 import qrsdetect as qrs
-from collections import Counter
 
 
-'''   Spłaszczenie macierzy do jednego wymiaru
-      @param matrix Macierz wejściowa
-      @return Macierz reprezentowana w jednym wymiarze
-'''
-def flatten(matrix):
-  i = 0
-  flat = []
-  for row in matrix:
-    for el in row:
-      flat.insert(i, el)
-      i += 1
-  return flat
+
+#------ GLOBAL VARIABLES ------# 
+
+FEATURES_PRESENTATION = False  # Present graphically features [Set to False, to extract features!]
+NUMBER_OF_EXAMPLES    = 2      # Number of examples to present graphically
 
 
-'''   Przygotowuje liste chorób dla danego pliku
-      @param file Nazwa pliku .hea
-      @return Choroba odpowiadająca danemu plikowi
+GET_WAVELET = True             # Extract wavelet transform coefficients
+GET_MEAN    = True             # Extract mean average from wavelet coefficients
+GET_STDDEV  = True             # Extract standard deviation from wavelet coefficients
+GET_FFT     = True             # Extract FFT spectrum
+GET_AR      = True             # Extract auto regressive model from signal
+
+NUMBER_OF_LEADS = 1            # [1 - 12] Each patient have 12 different leads
+
+HEARTBEATS_SEPARATELY = False  # Represent each heartbeat as different training example 
+
+#------------------------------# 
+
+
+
+'''   Finds name of a disease in header file
+      @param file Header file name
+      @return Disease name
 '''
 def get_disease(file):
   disease_header = "Reason for admission:"
@@ -45,9 +51,10 @@ def get_disease(file):
   return disease
 
 
-'''   Wartość średnia
-      @param signal Zbiór sygnałów otrzymanych z transformacji falkowej
-      @return Lista reprezentująca wartość średnią dla każdego punktu
+
+'''   Counts mean average from wavelet transform coefficient values
+      @param signal Data received from wavelet transform
+      @return List containing mean average from wavelet transform coefficient values
 '''
 def mean(signal):
   mean = []
@@ -60,10 +67,10 @@ def mean(signal):
 
 
 
-'''   Wariancja
-      @param signal Zbiór sygnałów otrzymanych z transformacji falkowej
-      @param mean Wyliczona wartość średnia dla każdego punktu
-      @return Lista reprezentująca wariancje dla każdego punktu
+'''   Counts variance from wavelet transform coefficient values
+      @param signal Data received from wavelet transform
+      @param mean Mean average from wavelet transform coefficient values
+      @return List containing variance from wavelet transform coefficient values
 '''
 def variance(signal, mean):
   variance = []
@@ -76,9 +83,9 @@ def variance(signal, mean):
 
 
 
-'''   Odchylenie standardowe 
-      @param variance Wariancja z wcześniej otrzymanego sygnału
-      @return Lista reprezentująca odchylenie standardowe dla każdego punktu
+'''   Counts standard deviation from wavelet transform coefficient values
+      @param variance Variance value from wavelet transform coefficient values 
+      @return List containing standard deviation of wavelet transform coefficient values
 '''
 def stddev(variance):
   stddev = []
@@ -88,108 +95,10 @@ def stddev(variance):
 
 
 
-'''   Ekstrakcja cech sygnału EKG
-      1) Wyrównanie sygnału 
-      2) Normalizacja sygnału
-      3) Wykrycie uderzeń serca (Pan, Tompkin's AlgorithM)
-      4) Transformacja falkowa
-      5) Wartość średnia transformacji falkowej
-      6) Wariancja transformacji falkowej
-      7) Odchylenie standardowe transformacji falkowej
+'''   Change diseases to numeric values
+      @param diseases Array containing diseases
+      @return List of diseases as numeric values, and their string representation
 '''
-def get_features():
-  features = []
-  diseases = []
-  os.chdir("patients")
-  licznik = 0
-
-  for dir in glob.glob("patient*"):
-    print("Processing:\t" + str(dir))
-
-    licznik = licznik + 1
-    os.chdir(dir)
-
-    for file in glob.glob("*.mat"):
-      matrix = scipy.io.loadmat(file)['val']
-      local_features = []
-      correct = True
-      info = {'name': "x", 'age': 50, 'sex': 'm', 'samplingrate' : 1000}
-
-      # Sprawdzenie czy każdy pomiar ma 15 sygnałów
-      if(len(matrix) != 15):
-        print("Not enough data")
-      else:
-        matrix_avg = []
-        signalsNo = 12
-
-        # Wyrównanie sygnału     
-        for signal in matrix[0:signalsNo]:
-          matrix_avg.append(moving_average(signal, 5001))
-
-        # Wykrycie odcinków QRS
-        ecg = qrs.Ecg(matrix_avg[0], info) 
-        ecg.qrsDetect(0)
-        QRS_peaks = ecg.QRSpeaks
-
-        # Pobranie cech sygnału
-        try:
-          wavelet = preprocessing.getFeature(matrix_avg[0:signalsNo], QRS_peaks)
-          wavelet = wavelet[0:len(wavelet) - 2]
-
-          # Wartość średnia z otrzymanego wavelet'u
-          meanV = mean(wavelet)
-          if (len(meanV) != 32 * signalsNo): 
-            correct = False
-            break
-
-          # Wariancja z otrzymanego wavelet'u
-          varianceV = variance(wavelet, meanV)
-
-          # Odchylenie standardowe z otrzymanego wavelet'u
-          stddevV = stddev(varianceV)
-
-          # Dopisanie wyliczonych cech z wavelet'u
-          local_features.append(meanV)
-          local_features.append(stddevV)
-      
-          # Sprawdzenie czy powiodła się ekstrakcja cech
-          if (correct == True):
-
-            # Transformata Fouriera 
-            for signal in matrix_avg:
-              fftV = get_freq_amp(fourier_transform(signal))
-              fftFreq, fftAmp = [], []
-              for val in fftV:
-                fftFreq.append(val[0])
-                fftAmp.append(val[1])
-              local_features.append(get_fourier_features(fftFreq, fftAmp))
-
-            # Spłaszczenie i dopisane lokalnych cech do macierzy cech
-            features.append(np.asarray(local_features).reshape(-1))
-            diseases.append(get_disease(file[:-4] + '.hea'))
-
-          counter = 0
-          for y in wavelet:
-            if (len(y) == (32 + 4) * signalsNo):   # 32 WAVELET + 4 AR MODEL
-              counter += 1
-              # Dopisanie cech do listy
-              features.append(y)
-            
-              # Dopisanie klasy do listy
-              diseases.append(get_disease(file[:-4] + '.hea'))
-
-          print("Features:", str(np.shape(features)))
-          print("Diseases:", str(np.shape(diseases)))
-
-        except ValueError:
-          print("#############################################")
-          print("ValueError: maxlag < nobs; [SKIP]")
-          print("#############################################")
-
-    os.chdir("..")
-  return (features, diseases)
-
-
 def fuzzy_values(diseases):
   fuzzy_diseases = []
   final_diseases = []
@@ -201,9 +110,16 @@ def fuzzy_values(diseases):
       next_value += 1
       final_diseases.append(disease)
     fuzzy_diseases.append(dict[disease])
-  return fuzzy_diseases,final_diseases
+  return fuzzy_diseases, final_diseases
 
 
+
+'''   Does moving average on given signal, and substract current value from 
+      average value, to align signal in one point.
+      @param signal Original signal
+      @param window Value how wide the window should be
+      @return Aligned signal
+'''
 def moving_average(signal, window=101):
   weights = np.repeat(1.0, window) / window
   smas = np.convolve(signal, weights, 'valid')
@@ -214,11 +130,21 @@ def moving_average(signal, window=101):
   return new_signal
 
 
+
+'''   Power FFT spectrum
+      @param signal Original signal
+      @return Power FFT spectrum
+'''
 def fourier_transform(signal):
   signalFFT = np.abs(scipy.fftpack.fft(signal)) ** 2
   return signalFFT
 
 
+
+'''   Counts amplitude for each frequency from given fft spectrum
+      @param fftV FFT spectrum
+      @return List of frequencies and corresponding amplitudes
+'''
 def get_freq_amp(fftV):
   vals = []
 
@@ -226,7 +152,7 @@ def get_freq_amp(fftV):
   K = 1000
 
   fftV[0] = 0
-  fftV = sklearn.preprocessing.normalize(fftV).reshape(-1)
+  fftV = sklearn.preprocessing.normalize(fftV.reshape(-1, 1)).flatten()
 
   for i, val in enumerate(fftV):
     freq = i * K / N
@@ -234,14 +160,20 @@ def get_freq_amp(fftV):
   return vals
 
 
+
+'''   Extract set of features from given amplitude and frequency list
+      @param fftFreq List of frequencies
+      @param fftAmp List of amplitudes
+      @return List of features from fft spectrum
+'''
 def get_fourier_features(fftFreq, fftAmp):
   features = []
 
-  # Maksymalna częstotliwość
+  # Maximum frequency
   max_freq = 50
 
-  #Krok do pomiaru średniej częstotliwości
-  step = 0.5
+  # Frequency step [Number of features = max_freq / step]
+  step = 0.2
   idx = 0
 
   for freq in np.linspace(0, max_freq, (1 / step) * max_freq):
@@ -257,23 +189,111 @@ def get_fourier_features(fftFreq, fftAmp):
   return features
 
 
-def main():
-  features, diseases = get_features()
-  print(Counter(diseases))
-  diseases,disease_name = fuzzy_values(diseases)
-  print(disease_name)
-  os.chdir("..")
-  scipy.io.savemat('features_fft_12.mat', {'features':features})
-  scipy.io.savemat('diseases_fft_12.mat', {'diseases':diseases})
-  scipy.io.savemat('diseases_name_fft_12.mat',{'target_names':disease_name})
-  matplotlib.pyplot.show()
+
+'''   Extract features from ECG signal
+       - Align signal
+       - Detect QRS
+       - Detect heartbeats (Pan, Tompkin's Algorithm)
+       - Wavelet transform + AR Model
+       - Mean average
+       - Standard deviation
+       - FFT spectrum
+'''
+def get_features():
+  features = []
+  diseases = []
+  os.chdir("patients")
+  processed = 1
+  total = int(os.popen("find . -name *.mat | wc -l").read())
+
+  for dir in glob.glob("patient*"):
+    os.chdir(dir)
+    for file in glob.glob("*.mat"):
+      print("Processing: %s   [%d / %d]" % (str(file), processed, total))
+      matrix = scipy.io.loadmat(file)['val']
+      local_features = []
+      correct = True
+      info = {'name': "data", 'age': 1, 'sex': 'm', 'samplingrate' : 1000}
+
+      if(len(matrix) != 15):
+        print("Patient's data is not complete")
+      else:
+        matrix_avg = []
+
+        # Align the signal   
+        for signal in matrix[0:NUMBER_OF_LEADS]:
+          matrix_avg.append(moving_average(signal, 5001))
+
+        try:
+          wavelet = []	
+
+          # Get wavelet transform coefficients
+          if (GET_MEAN or GET_STDDEV or GET_AR or GET_WAVELETS):
+          
+            # Detect QRS
+            ecg = qrs.Ecg(matrix_avg[0], info) 
+            ecg.qrsDetect(0)
+            QRS_peaks = ecg.QRSpeaks
+
+            if (GET_AR):
+              wavelet = preprocessing.getFeatureWithArWithQrs(matrix_avg[0:NUMBER_OF_LEADS], QRS_peaks)
+            else:
+              wavelet = preprocessing.getFeatureWithQrs(matrix_avg[0:NUMBER_OF_LEADS], QRS_peaks)
+            wavelet = wavelet[0:len(wavelet) - 2]
+
+          # Get mean average from wavelet transform coefficients
+          if (GET_MEAN):
+            meanV = mean(wavelet)
+            if (len(meanV) == 32 * NUMBER_OF_LEADS): 
+              local_features.append(meanV)
+
+          # Get standard deviation from wavelet transform coefficients
+          if (GET_STDDEV):
+            meanV = mean(wavelet)
+            if (len(meanV) == 32 * NUMBER_OF_LEADS):
+              varianceV = variance(wavelet, meanV)
+              stddevV = stddev(varianceV)
+              local_features.append(stddevV)
+          
+          if (GET_FFT):
+            # Get Fast Fourier Transform spectrum
+            for signal in matrix_avg:
+              fftV = get_freq_amp(fourier_transform(signal))
+              fftFreq, fftAmp = [], []
+              for val in fftV:
+                fftFreq.append(val[0])
+                fftAmp.append(val[1])
+              local_features.append(get_fourier_features(fftFreq, fftAmp))
+
+          if (HEARTBEATS_SEPARATELY):
+            for y in wavelet:
+              if (GET_AR):
+                if (len(y) == (32 + 4) * NUMBER_OF_LEADS):  
+                  features.append(y)
+                  diseases.append(get_disease(file[:-4] + '.hea'))
+              elif (GET_WAVELET):
+                if (len(y) == 32 * NUMBER_OF_LEADS):
+                  features.append(y)
+                  diseases.append(get_disease(file[:-4] + '.hea'))
+          else:
+            features.append(np.asarray(local_features).flatten())
+            diseases.append(get_disease(file[:-4] + '.hea'))
+     
+          processed += 1
+        except ValueError:
+          processed += 1
+          print("#############################################")
+          print("ValueError: maxlag < nobs; [SKIP]")
+          print("#############################################")
+
+    os.chdir("..")
+  return (features, diseases)
 
 
-#########################################################################
-########################  FEATURE VISUALIZATION  ######################## 
-#########################################################################
 
-def features_presentation(number_of_plots):
+# ------ FEATURES PRESENTATION ------ #
+
+def features_presentation (number_of_plots):
   os.chdir("patients")
   dir_list = glob.glob("patient*")
   
@@ -293,7 +313,7 @@ def features_presentation(number_of_plots):
     mv_avg = moving_average(signal, 5001)
 
     # Pobranie cech transformaty falkowej i ich normalizacja
-    wavelet = preprocessing.getFeature(signal, '0')
+    wavelet = preprocessing.getFeature(mv_avg, '0')
     wavelet = sklearn.preprocessing.normalize(wavelet)
 
     # Wartość średnia po wszystkich uderzeniach
@@ -361,6 +381,18 @@ def features_presentation(number_of_plots):
   matplotlib.pyplot.show()
 
 
+def main():
+  if (FEATURES_PRESENTATION):
+    features_presentation(NUMBER_OF_EXAMPLES)
+  else:
+    features, diseases = get_features()
+    diseases,disease_name = fuzzy_values(diseases)
+    os.chdir("..")
+    scipy.io.savemat('features.mat', {'features':features})
+    scipy.io.savemat('diseases.mat', {'diseases':diseases})
+    scipy.io.savemat('diseases_name.mat',{'target_names':disease_name})
+    matplotlib.pyplot.show()
+
+
 if __name__ == '__main__':
-  #main()   # Odkomentować kiedy chcemy wydobyć odpowiednie cechy
-  features_presentation(1)
+  main()
