@@ -38,7 +38,6 @@ def makeWT(y,times): ## robi pare razy WT na approx.
 	return wtaxA,wtaxD
 
 
-
 def armodel(y,cutlist):
 	array = []
 	result = []
@@ -55,19 +54,33 @@ def armodel(y,cutlist):
 		ar = ar_model.AR(x)
 		arfit = ar.fit(maxlag=3,method='cmle',disp = 0)
 		result.append(arfit)
-	#print(result)
 	return result
 		
 
-def extract_arrays(y,cutlist,times): ## roz
+def extract_arrays(y,cutlist,times): 	
+	arfit = armodel(y,cutlist)
+	y,wtaxD=makeWT(y,times)	
+	cutlist = [int(x / (2**(times))) for x in cutlist]
 	
+	arrays = []
+	offset = 5 
+	for index,x in enumerate(cutlist[1:-1]):
+		x2 = x+ y[x-offset:x+offset].tolist().index(max(y[x-offset:x+offset]))
+		x2=x2-offset
+		i = x2 -20*(2**(3-times))
+		i1 = x2 + 12*(2**(3-times))
+		arrays.append(y[i:i1].copy())
+	return arrays
+
+
+def extract_arrays_with_arfit(y, cutlist, times):
 	arfit = armodel(y,cutlist)
 	y,wtaxD=makeWT(y,times)	
 	cutlist = [int(x / (2**(times))) for x in cutlist]
 	
 	arrays = []
 	arrays_with_arfit = []
-	offset = 5 # ile sprawdzac w poblizu //powinno zalezec od WT_times ale kij z tym
+	offset = 5 
 	for index,x in enumerate(cutlist[1:-1]):
 		x2 = x+ y[x-offset:x+offset].tolist().index(max(y[x-offset:x+offset]))
 		x2=x2-offset
@@ -78,7 +91,6 @@ def extract_arrays(y,cutlist,times): ## roz
 		arrays_with_arfit.append(np.concatenate([arrays[index],arfit[index].params]))
 	return arrays_with_arfit
 	return arrays
-
 
 
 def find_QRS(y,n):
@@ -135,107 +147,45 @@ def moving_average(signal, window=101):
     new_signal.append(signal[index] - smas[index])
   return new_signal
 
-def getFeature(data,qrs_peaks): ## da
-	'''
-	info: A dictionary object holding info
-                    - 'name' = Patients name
-                    - 'age' = Age in years
-                    - 'sex' = 'm', 'f' or 'u' for unknown
-                    - 'samplingrate' = Hz
-	'''
-	#info = {'name': "Roman", 'age': 50, 'sex': 'm', 'samplingrate' : 1000} ## pote
-	
-	mV = 2000.0 ## tuta
+
+def getFeatureWithQrs(data, qrs_peaks): 
+	mV = 2000.0
 	multiple_arrays = []
 	for i in qrs_peaks:
 		multiple_arrays.append([])
 	for index, signal in enumerate(data):
-
-		#print(index)
-		#print(len(multiple_arrays))
 		data2 = []
 		for i in signal:
 			data2.append(i / mV)
-		arrays = extract_arrays(data2,qrs_peaks,3) ## wyciecie pojedynczych uderzen dzieki QRSpeaks
+		arrays = extract_arrays(data2, qrs_peaks, 3)
 		for index,array in enumerate(arrays):
 			multiple_arrays[index].extend(array)
-		#print(arrays)
-		#multiple_arrays.extend(arrays)
-		#print(multiple_arrays)
 	return multiple_arrays	
 	return arrays
 
-def main():
-	data = spio.loadmat('s0010_rem.mat')
-	#data = spio.loadmat('s0130lrem.mat')
-#	data = spio.loadmat('100m.mat')
-	
-	data = data['val']
-	data3 = []
-	fig = plt.figure('ECG chart')
-	ax1 = plt.subplot(1, 1 ,1)
-	ax1.plot(range(0,len(data[3])),data[3])
-	plt.show()
-	for index,data2 in enumerate(data):
-		#data[index] = moving_average(data2,5001)
-		data3.append(moving_average(data2,5001))
-	info = 0
-	ax1 = plt.subplot(1, 1 ,1)
-	ax1.plot(range(0,len(data[3])),data[3])
-	plt.show()
-	#plt.show()
-	info = {'name': "x", 'age': 50, 'sex': 'm', 'samplingrate' : 1000}
-	ecg = qrs.Ecg(data3[0],info) ##inicjalizacja ecg
-	ecg.qrsDetect(0)
-	QRS_peaks = ecg.QRSpeaks
+def getFeatureWithArWithQrs (data, qrs_peaks): 
+	mV = 2000.0
+	multiple_arrays = []
+	for i in qrs_peaks:
+		multiple_arrays.append([])
+	for index, signal in enumerate(data):
+		data2 = []
+		for i in signal:
+			data2.append(i / mV)
+		arrays = extract_arrays_with_arfit(data2, qrs_peaks, 3)
+		for index,array in enumerate(arrays):
+			multiple_arrays[index].extend(array)
+	return multiple_arrays	
+	return arrays
 
-	arrays = getFeature(data3[0:12],QRS_peaks)
-	print(len(arrays))
-	ax1 = plt.subplot(1, 1 ,1)
-	for i in arrays:
-		ax1.plot(range(0,len(i)),i)
-	'''
-	data2 = []
+
+def getFeature(data,info):
+	info = {'name': "Roman", 'age': 50, 'sex': 'm', 'samplingrate' : 1000}
+	data2 = []	
+	mV = 2000.0 
 	for i in data:
-		data2.append(i/2000.0)
-	'''
-	'''
-	infodict`: A dictionary object holding info
-                    - 'name' = Patients name
-                    - 'age' = Age in years
-                    - 'sex' = 'm', 'f' or 'u' for unknown
-                    - 'samplingrate' = Hz
-	'''
-	'''
-	info = {'name': "roman", 'age': 50, 'sex': 'm', 'samplingrate' : 360}
-	ecg = qrs.Ecg(data2,info)
-	#ecg.qrsDetect(0)
-	#print(data, len(data))
-	fig = plt.figure('ECG chart')
-	(qrs_coords,wtaxD) = preprocess(data2.copy())
-	ax1 = plt.subplot(1, 1 ,1)
+		data2.append(i / mV)
+	ecg = qrs.Ecg(data2,info) 
 	ecg.qrsDetect(0)
-	qrs_coords = ecg.QRSpeaks
-	#ax1.plot(range(0,len(data)),data)
-	#print(qrs_coords,len(qrs_coords))
-	
-	data2 = extract_arrays(data2,qrs_coords,3)
-	for i in data2:
-		ax1.plot(range(0,len(i)),i)
-	
-	## rysowanie linii
-	line = []
-	#print(qrs_coords)
-	print("liczba wykrytych udzerzen: ")
-	print(len(qrs_coords))
-	for i in qrs_coords:
-		line.append((i,2500))
-		line.append((i,-1))
-	(xs, ys) = zip(*line)
-	for j in range(0,len(xs)-1,2):
-		ax1.add_line(lines.Line2D(xs[j:j+2], ys[j:j+2], linewidth=1, color = 'red'))
-	'''
-	plt.show()
-
-if __name__ == '__main__':
-    main()
+	arrays = extract_arrays(data2, ecg.QRSpeaks, 3) 
+	return arrays
